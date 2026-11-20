@@ -1,4 +1,5 @@
 const std = @import("std");
+const Translator = @import("translate_c").Translator;
 
 const package_version: std.SemanticVersion = .{ .major = 2, .minor = 10, .patch = 0 };
 const package_version_str = "2.10.0";
@@ -503,6 +504,57 @@ pub fn build(b: *std.Build) void {
     } else {
         b.getInstallStep().dependOn(&lib.step);
     }
+
+    // Exported Zig module wrapping expat.h via translate-c.
+    const translate_c = b.dependency("translate_c", .{});
+    const expat_translator: Translator = .init(translate_c, .{
+        .name = "expat",
+        .c_source_file = expat_dep.path("expat/lib/expat.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    expat_translator.addIncludePath(lib_inc);
+    expat_translator.linkLibrary(lib);
+    if (cfg.large_size) {
+        expat_translator.defineCMacro("XML_LARGE_SIZE", "1");
+    }
+    if (cfg.unicode) {
+        expat_translator.defineCMacro("XML_UNICODE", "1");
+        if (cfg.unicode_wchar_t) {
+            expat_translator.defineCMacro("XML_UNICODE_WCHAR_T", "1");
+        }
+    }
+    if (cfg.enable_dtd) {
+        expat_translator.defineCMacro("XML_DTD", "1");
+    }
+    expat_translator.defineCMacro("XML_GE", if (cfg.enable_ge) "1" else "0");
+    if (platform.is_windows and !cfg.shared) {
+        expat_translator.defineCMacro("XML_STATIC", "1");
+    }
+    b.modules.put(b.allocator, b.dupe("expat"), expat_translator.mod) catch @panic("OOM");
+
+    const zig_test_wf = b.addWriteFiles();
+    const zig_test_src = zig_test_wf.add("expat_zig_test.zig", zig_expat_test_zig);
+    const zig_test_mod = b.createModule(.{
+        .root_source_file = zig_test_src,
+        .target = target,
+        .optimize = optimize,
+    });
+    zig_test_mod.addImport("expat", expat_translator.mod);
+    if (cfg.shared and !platform.is_windows) {
+        if (platform.is_darwin) {
+            zig_test_mod.addRPathSpecial("@loader_path/../lib");
+        } else if (!platform.is_wasi) {
+            zig_test_mod.addRPathSpecial("$ORIGIN/../lib");
+        }
+    }
+    const zig_test_exe = b.addTest(.{
+        .name = "expat-zig-test",
+        .root_module = zig_test_mod,
+    });
+    const run_zig_test = b.addRunArtifact(zig_test_exe);
+    const zig_test_step = b.step("zig-test", "Run Zig integration tests for the expat module");
+    zig_test_step.dependOn(&run_zig_test.step);
 
     // pkg-config file (expat.pc).
     if (cfg.build_pkgconfig) {
@@ -1077,6 +1129,7 @@ fn failBuild(b: *std.Build, msg: []const u8) void {
     b.getInstallStep().dependOn(&fail.step);
     const step_names = [_]struct { name: []const u8, desc: []const u8 }{
         .{ .name = "test", .desc = "Run the Expat unit test suite" },
+        .{ .name = "zig-test", .desc = "Run Zig integration tests for the expat module" },
         .{ .name = "examples", .desc = "Build and install Expat example programs" },
         .{ .name = "xmlwf", .desc = "Run the xmlwf CLI tool" },
         .{ .name = "gennmtab", .desc = "Run the gennmtab table generator" },
@@ -1273,6 +1326,42 @@ fn formatSummary(b: *std.Build, cfg: *const BuildConfig, triple: []const u8) []c
 fn onOff(val: bool) []const u8 {
     return if (val) "ON" else "OFF";
 }
+
+const zig_expat_test_zig =
+    \\const std = @import("std");
+    \\const expat = @import("expat");
+    \\
+    \\const State = struct {
+    \\    seen_root: bool = false,
+    \\};
+    \\
+    \\fn startElement(user_data: ?*anyopaque, name: [*c]const expat.XML_Char, atts: [*c]const [*c]const expat.XML_Char) callconv(.c) void {
+    \\    _ = name;
+    \\    _ = atts;
+    \\    const state: *State = @ptrCast(@alignCast(user_data.?));
+    \\    state.seen_root = true;
+    \\}
+    \\
+    \\test "expat parse from Zig" {
+    \\    const ver = expat.XML_ExpatVersionInfo();
+    \\    try std.testing.expectEqual(@as(c_int, 2), ver.major);
+    \\    try std.testing.expectEqual(@as(c_int, 10), ver.minor);
+    \\    try std.testing.expectEqual(@as(c_int, 0), ver.micro);
+    \\
+    \\    const parser = expat.XML_ParserCreate(null) orelse return error.OutOfMemory;
+    \\    defer expat.XML_ParserFree(parser);
+    \\
+    \\    var state: State = .{};
+    \\    expat.XML_SetUserData(parser, &state);
+    \\    expat.XML_SetElementHandler(parser, startElement, null);
+    \\
+    \\    const xml = "<root><child/></root>";
+    \\    const status = expat.XML_Parse(parser, xml.ptr, @intCast(xml.len), 1);
+    \\    try std.testing.expectEqual(@as(c_uint, expat.XML_STATUS_OK), status);
+    \\    try std.testing.expect(state.seen_root);
+    \\}
+    \\
+;
 
 const configure_file_helper_zig =
     \\const std = @import("std");
