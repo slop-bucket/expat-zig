@@ -62,7 +62,6 @@ const PlatformInfo = struct {
 
 const BuildConfig = struct {
     target: std.Build.ResolvedTarget,
-    optimize: std.lang.Optimize,
     platform: PlatformInfo,
     shared: bool,
     char_type: CharType,
@@ -325,7 +324,6 @@ pub fn build(b: *std.Build) void {
 
     const cfg: BuildConfig = .{
         .target = target,
-        .optimize = optimize,
         .platform = platform,
         .shared = shared,
         .char_type = char_type,
@@ -928,25 +926,6 @@ pub fn build(b: *std.Build) void {
             }
         }
     }
-
-    // Configuration summary step (port of ref/CMakeLists.txt lines 1022-1100).
-    const summary_text = formatSummary(b, &cfg, triple_alloc);
-    const summary_wf = b.addWriteFiles();
-    const summary_txt = summary_wf.add("summary.txt", summary_text);
-    const summary_mod = b.createModule(.{
-        .root_source_file = b.path("build/summary.zig"),
-        .target = b.graph.host,
-    });
-    summary_mod.addAnonymousImport("summary.txt", .{
-        .root_source_file = summary_txt,
-    });
-    const summary_exe = b.addExecutable(.{
-        .name = "expat-summary",
-        .root_module = summary_mod,
-    });
-    const run_summary = b.addRunArtifact(summary_exe);
-    const summary_step = b.step("summary", "Print the Expat build configuration summary");
-    summary_step.dependOn(&run_summary.step);
 }
 
 fn addConfiguredTemplate(
@@ -1094,7 +1073,6 @@ fn failBuild(b: *std.Build, msg: []const u8) void {
         .{ .name = "benchmark", .desc = "Run the Expat benchmark tool" },
         .{ .name = "fuzzers", .desc = "Build Expat libFuzzer targets" },
         .{ .name = "run-xmltest", .desc = "Download W3C XML conformance suite and run xmlwf against it" },
-        .{ .name = "summary", .desc = "Print the Expat build configuration summary" },
     };
     for (step_names) |s| {
         if (b.top_level_steps.get(s.name) == null) {
@@ -1172,92 +1150,4 @@ fn applyCommonMacros(mod: *std.Build.Module, cfg: *const BuildConfig) void {
     if (cfg.platform.is_msvc) {
         mod.addCMacro("_CRT_SECURE_NO_WARNINGS", "1");
     }
-}
-
-fn formatSummary(b: *std.Build, cfg: *const BuildConfig, triple: []const u8) []const u8 {
-    const char_summary = switch (cfg.char_type) {
-        .char => "char (UTF-8)",
-        .ushort => "ushort (unsigned short, UTF-16)",
-        .wchar_t => if (cfg.platform.is_windows) "wchar_t (UTF-16)" else "wchar_t (UTF-32)",
-    };
-    const entropy_block = if (cfg.platform.is_windows)
-        b.fmt("    rand_s ................... ON\n", .{})
-    else
-        b.fmt(
-            \\    arc4random ............... {s}
-            \\    arc4random_buf ........... {s}
-            \\    getentropy ............... {s}
-            \\    getrandom ................ {s}
-            \\    syscall SYS_getrandom .... {s}
-            \\    /dev/urandom ............. {s}
-            \\
-        , .{
-            onOff(cfg.have_arc4random),
-            onOff(cfg.have_arc4random_buf),
-            onOff(cfg.have_getentropy),
-            onOff(cfg.have_getrandom),
-            onOff(cfg.have_syscall_getrandom),
-            onOff(cfg.dev_urandom),
-        });
-
-    return b.fmt(
-        \\===========================================================================
-        \\
-        \\Expat version ................ {s}
-        \\
-        \\Configuration
-        \\  Target ..................... {s}
-        \\  Optimize ................... {s}
-        \\  Prefix (pkgconfig) ......... {s}
-        \\  Shared libraries ........... {s}
-        \\  Character type ............. {s}
-        \\  Library name postfix ....... {s}
-        \\
-        \\  Build documentation ........ {s}
-        \\  Build examples ............. {s}
-        \\  Build fuzzers .............. {s}
-        \\  Build tests ................ {s}
-        \\  Build tools (xmlwf) ........ {s}
-        \\  Build pkg-config file ...... {s}
-        \\  Install files .............. {s}
-        \\  Symbol versioning .......... {s}
-        \\
-        \\  Features
-        \\    Context bytes ............ {d}
-        \\    DTD support .............. {s}
-        \\    General entities ......... {s}
-        \\    Large size ............... {s}
-        \\    Namespace support ........ {s}
-        \\
-        \\  Entropy sources
-        \\{s}
-        \\===========================================================================
-        \\
-    , .{
-        package_version_str,
-        triple,
-        @tagName(cfg.optimize),
-        cfg.pkgconfig_prefix,
-        onOff(cfg.shared),
-        char_summary,
-        if (cfg.postfix.len > 0) cfg.postfix else "(none)",
-        onOff(cfg.build_docs),
-        onOff(cfg.build_examples),
-        onOff(cfg.build_fuzzers),
-        onOff(cfg.build_tests),
-        onOff(cfg.build_tools),
-        onOff(cfg.build_pkgconfig),
-        onOff(cfg.enable_install),
-        onOff(cfg.symbol_versioning),
-        cfg.context_bytes,
-        onOff(cfg.enable_dtd),
-        onOff(cfg.enable_ge),
-        onOff(cfg.large_size),
-        onOff(cfg.enable_ns),
-        entropy_block,
-    });
-}
-
-fn onOff(val: bool) []const u8 {
-    return if (val) "ON" else "OFF";
 }
