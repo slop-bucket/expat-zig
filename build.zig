@@ -259,8 +259,8 @@ pub fn build(b: *std.Build) void {
     const dev_urandom = if (target.result.os.tag == .windows) false else dev_urandom_opt;
 
     const expat_dep = b.dependency("expat", .{});
-    const expat_root = expat_dep.path("expat");
-    const lib_inc = expat_dep.path("expat/lib");
+    const expat_root = expat_dep.path(".");
+    const lib_inc = expat_dep.path("lib");
 
     // Generate expat_config.h matching ref/CMakeLists.txt + expat_config.h.cmake.
     const config_header = b.addConfigHeader(.{
@@ -370,7 +370,7 @@ pub fn build(b: *std.Build) void {
 
         win32_def_file = addConfiguredTemplate(
             b,
-            expat_dep.path("expat/lib/libexpat.def.cmake"),
+            expat_dep.path("lib/libexpat.def.cmake"),
             "libexpat.def",
             if (dtd_or_ge) " " else ";",
         );
@@ -394,15 +394,15 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag != .windows and shared and symbol_versioning) {
         const map_file = addConfiguredTemplate(
             b,
-            expat_dep.path("expat/lib/libexpat.map.in"),
+            expat_dep.path("lib/libexpat.map.in"),
             "libexpat.map",
             if (dtd_or_ge) " " else "#",
         );
         lib.setVersionScript(map_file);
     }
 
-    lib.installHeader(expat_dep.path("expat/lib/expat.h"), "expat.h");
-    lib.installHeader(expat_dep.path("expat/lib/expat_external.h"), "expat_external.h");
+    lib.installHeader(expat_dep.path("lib/expat.h"), "expat.h");
+    lib.installHeader(expat_dep.path("lib/expat_external.h"), "expat_external.h");
     lib.installConfigHeader(config_header);
 
     if (enable_install) {
@@ -415,7 +415,7 @@ pub fn build(b: *std.Build) void {
     const translate_c = b.dependency("translate_c", .{});
     const expat_translator: Translator = .init(translate_c, .{
         .name = "expat",
-        .c_source_file = expat_dep.path("expat/lib/expat.h"),
+        .c_source_file = expat_dep.path("lib/expat.h"),
         .target = target,
         .optimize = optimize,
     });
@@ -478,12 +478,12 @@ pub fn build(b: *std.Build) void {
     // Documentation files (AUTHORS, changelog, optional xmlwf.1 man page).
     if (enable_install) {
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-            expat_dep.path("expat/AUTHORS"),
+            expat_dep.path("AUTHORS"),
             .prefix,
             "share/doc/expat/AUTHORS",
         ).step);
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-            expat_dep.path("expat/Changes"),
+            expat_dep.path("Changes"),
             .prefix,
             "share/doc/expat/changelog",
         ).step);
@@ -499,7 +499,7 @@ pub fn build(b: *std.Build) void {
         });
         xmlwf_mod.addConfigHeader(config_header);
         xmlwf_mod.addIncludePath(lib_inc);
-        xmlwf_mod.addIncludePath(expat_dep.path("expat/xmlwf"));
+        xmlwf_mod.addIncludePath(expat_dep.path("xmlwf"));
         applyCommonMacros(xmlwf_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
         if (target.result.os.tag == .windows and !shared) {
             xmlwf_mod.addCMacro("XML_STATIC", "1");
@@ -549,28 +549,28 @@ pub fn build(b: *std.Build) void {
 
         // Internal table generator tool gennmtab (built, not installed to bin/).
         // Upstream gennmtab/gennmtab.c:425 shifts signed 1 << 31; disable C UBSan so Debug runs cleanly.
-        const gennmtab_mod = b.createModule(.{
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-            .sanitize_c = .off,
-        });
-        applyCommonMacros(gennmtab_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
-        gennmtab_mod.addCSourceFiles(.{
-            .root = expat_root,
-            .files = &.{"gennmtab/gennmtab.c"},
-            .flags = c_flags,
-        });
-        const gennmtab = b.addExecutable(.{
-            .name = "gennmtab",
-            .root_module = gennmtab_mod,
-        });
-        b.getInstallStep().dependOn(&gennmtab.step);
-
-        const run_gennmtab = b.addRunArtifact(gennmtab);
-        run_gennmtab.addPassthruArgs();
-        const gennmtab_step = b.step("gennmtab", "Run the gennmtab table generator");
-        gennmtab_step.dependOn(&run_gennmtab.step);
+        // const gennmtab_mod = b.createModule(.{
+        //     .target = target,
+        //     .optimize = optimize,
+        //     .link_libc = true,
+        //     .sanitize_c = .off,
+        // });
+        // applyCommonMacros(gennmtab_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
+        // gennmtab_mod.addCSourceFiles(.{
+        //     .root = expat_root,
+        //     .files = &.{"gennmtab/gennmtab.c"},
+        //     .flags = c_flags,
+        // });
+        // const gennmtab = b.addExecutable(.{
+        //     .name = "gennmtab",
+        //     .root_module = gennmtab_mod,
+        // });
+        // b.getInstallStep().dependOn(&gennmtab.step);
+        //
+        // const run_gennmtab = b.addRunArtifact(gennmtab);
+        // run_gennmtab.addPassthruArgs();
+        // const gennmtab_step = b.step("gennmtab", "Run the gennmtab table generator");
+        // gennmtab_step.dependOn(&run_gennmtab.step);
 
         if (build_docs) {
             if (docbook_to_man) |tool| {
@@ -582,7 +582,7 @@ pub fn build(b: *std.Build) void {
                 });
                 const out_dir = man_step.addOutputDirectoryArg("doc");
                 man_step.addArg(tool);
-                man_step.addFileArg(expat_dep.path("expat/doc/xmlwf.xml"));
+                man_step.addFileArg(expat_dep.path("doc/xmlwf.xml"));
 
                 b.getInstallStep().dependOn(&man_step.step);
                 if (enable_install) {
@@ -675,7 +675,7 @@ pub fn build(b: *std.Build) void {
         });
         runtests_mod.addConfigHeader(config_header);
         runtests_mod.addIncludePath(lib_inc);
-        runtests_mod.addIncludePath(expat_dep.path("expat/tests"));
+        runtests_mod.addIncludePath(expat_dep.path("tests"));
         applyCommonMacros(runtests_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
         runtests_mod.addCMacro("XML_TESTING", "1");
         if (target.result.os.tag == .windows) {
@@ -942,7 +942,7 @@ fn failBuild(b: *std.Build, msg: []const u8) void {
         .{ .name = "zig-test", .desc = "Run Zig integration tests for the expat module" },
         .{ .name = "examples", .desc = "Build and install Expat example programs" },
         .{ .name = "xmlwf", .desc = "Run the xmlwf CLI tool" },
-        .{ .name = "gennmtab", .desc = "Run the gennmtab table generator" },
+        // .{ .name = "gennmtab", .desc = "Run the gennmtab table generator" },
         .{ .name = "benchmark", .desc = "Run the Expat benchmark tool" },
         .{ .name = "fuzzers", .desc = "Build Expat libFuzzer targets" },
         .{ .name = "run-xmltest", .desc = "Download W3C XML conformance suite and run xmlwf against it" },
