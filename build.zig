@@ -1,11 +1,12 @@
 const std = @import("std");
 const Translator = @import("translate_c").Translator;
+const manifest = @import("build.zig.zon");
 
-const package_version: std.SemanticVersion = .{ .major = 2, .minor = 10, .patch = 0 };
-const package_version_str = "2.10.0";
-const package_name = "expat";
-const package_tarname = "expat";
-const package_string = "expat 2.10.0";
+const package_version_str = manifest.version;
+const package_version = std.SemanticVersion.parse(package_version_str) catch unreachable;
+const package_name = @tagName(manifest.name);
+const package_tarname = package_name;
+const package_string = package_name ++ " " ++ package_version_str;
 const package_bugreport = "https://github.com/libexpat/libexpat/issues";
 const package_url = "";
 
