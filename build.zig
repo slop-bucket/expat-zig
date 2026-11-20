@@ -448,18 +448,15 @@ pub fn build(b: *std.Build) void {
     const dtd_or_ge = cfg.enable_dtd or cfg.enable_ge;
     var win32_def_file: ?std.Build.LazyPath = null;
     if (platform.is_windows and cfg.shared) {
-        const version_rc = b.addWriteFiles().add(
-            "win32/version.rc",
-            renderVersionRc(b),
-        );
         const dll_ver = b.fmt("-DVER_FILEVERSION={d},{d},{d},0", .{
             package_version.major,
             package_version.minor,
             package_version.patch,
         });
+        const dll_ver_str = b.fmt("-DVER_FILEVERSION_STR=\"{s}.0\"", .{package_version_str});
         lib_mod.addWin32ResourceFile(.{
-            .file = version_rc,
-            .flags = &.{dll_ver},
+            .file = b.path("build/version.rc"),
+            .flags = &.{ dll_ver, dll_ver_str },
         });
 
         win32_def_file = addConfiguredTemplate(
@@ -533,10 +530,8 @@ pub fn build(b: *std.Build) void {
     }
     b.modules.put(b.allocator, b.dupe("expat"), expat_translator.mod) catch @panic("OOM");
 
-    const zig_test_wf = b.addWriteFiles();
-    const zig_test_src = zig_test_wf.add("expat_zig_test.zig", zig_expat_test_zig);
     const zig_test_mod = b.createModule(.{
-        .root_source_file = zig_test_src,
+        .root_source_file = b.path("tests/expat_zig_test.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -558,22 +553,7 @@ pub fn build(b: *std.Build) void {
 
     // pkg-config file (expat.pc).
     if (cfg.build_pkgconfig) {
-        const pc_content = b.fmt(
-            \\prefix={s}
-            \\exec_prefix=${{prefix}}
-            \\libdir=${{exec_prefix}}/lib
-            \\includedir=${{prefix}}/include
-            \\
-            \\Name: expat{s}
-            \\Version: {s}
-            \\Description: expat XML parser
-            \\URL: https://libexpat.github.io/
-            \\Libs: -L${{libdir}} -l{s}
-            \\Libs.private: {s}
-            \\Cflags: -I${{includedir}}
-            \\Cflags.private: -DXML_STATIC
-            \\
-        , .{
+        const pc_content = b.fmt(@embedFile("build/expat.pc.in"), .{
             cfg.pkgconfig_prefix,
             cfg.postfix,
             package_version_str,
@@ -856,32 +836,9 @@ pub fn build(b: *std.Build) void {
     // W3C XML conformance suite (run-xmltest).
     if (cfg.build_tools and !platform.is_msvc) {
         if (xmlwf_exe) |xmlwf| {
-            const xmltest_cmd = b.addSystemCommand(&.{
-                "sh",
-                "-c",
-                \\set -eu
-                \\WORK="$1"
-                \\SRC="$2"
-                \\XMLWF="$3"
-                \\mkdir -p "$WORK/tests"
-                \\if [ ! -f "$WORK/tests/xmlts.zip" ]; then
-                \\  if command -v curl >/dev/null 2>&1; then
-                \\    curl -fsSL -o "$WORK/tests/xmlts.zip" https://www.w3.org/XML/Test/xmlts20080827.zip
-                \\  else
-                \\    wget -O "$WORK/tests/xmlts.zip" https://www.w3.org/XML/Test/xmlts20080827.zip
-                \\  fi
-                \\fi
-                \\if [ ! -d "$WORK/tests/xmlconf" ]; then
-                \\  (cd "$WORK/tests" && unzip -q xmlts.zip)
-                \\fi
-                \\(cd "$WORK" && bash "$SRC/tests/xmltest.sh" "$XMLWF" > "$WORK/tests/xmltest.log" 2>&1 || true)
-                \\cp "$WORK/tests/xmltest.log" "$WORK/tests/xmltest.log.raw"
-                \\bash "$SRC/fix-xmltest-log.sh" "$WORK/tests/xmltest.log"
-                \\diff -u "$SRC/tests/xmltest.log.expected" "$WORK/tests/xmltest.log"
-                ,
-                "_",
-                ".zig-cache/xmltest",
-            });
+            const xmltest_cmd = b.addSystemCommand(&.{"sh"});
+            xmltest_cmd.addFileArg(b.path("build/run_xmltest.sh"));
+            xmltest_cmd.addArg(".zig-cache/xmltest");
             xmltest_cmd.addDirectoryArg(expat_root);
             xmltest_cmd.addArtifactArg(xmlwf);
             const xmltest_step = b.step("run-xmltest", "Download W3C XML conformance suite and run xmlwf against it");
@@ -915,7 +872,7 @@ pub fn build(b: *std.Build) void {
         });
 
         const fuzz_main_c: ?std.Build.LazyPath = if (fuzzing_engine == null)
-            b.addWriteFiles().add("fuzz_main.c", fuzz_corpus_runner_c)
+            b.path("build/fuzz_main.c")
         else
             null;
 
@@ -975,14 +932,17 @@ pub fn build(b: *std.Build) void {
     // Configuration summary step (port of ref/CMakeLists.txt lines 1022-1100).
     const summary_text = formatSummary(b, &cfg, triple_alloc);
     const summary_wf = b.addWriteFiles();
-    _ = summary_wf.add("summary.txt", summary_text);
-    const summary_src = summary_wf.add("summary.zig", summary_helper_zig);
+    const summary_txt = summary_wf.add("summary.txt", summary_text);
+    const summary_mod = b.createModule(.{
+        .root_source_file = b.path("build/summary.zig"),
+        .target = b.graph.host,
+    });
+    summary_mod.addAnonymousImport("summary.txt", .{
+        .root_source_file = summary_txt,
+    });
     const summary_exe = b.addExecutable(.{
         .name = "expat-summary",
-        .root_module = b.createModule(.{
-            .root_source_file = summary_src,
-            .target = b.graph.host,
-        }),
+        .root_module = summary_mod,
     });
     const run_summary = b.addRunArtifact(summary_exe);
     const summary_step = b.step("summary", "Print the Expat build configuration summary");
@@ -995,12 +955,10 @@ fn addConfiguredTemplate(
     output_name: []const u8,
     replacement: []const u8,
 ) std.Build.LazyPath {
-    const wf = b.addWriteFiles();
-    const src = wf.add("configure_file.zig", configure_file_helper_zig);
     const exe = b.addExecutable(.{
         .name = "expat-configure-file",
         .root_module = b.createModule(.{
-            .root_source_file = src,
+            .root_source_file = b.path("build/configure_file.zig"),
             .target = b.graph.host,
         }),
     });
@@ -1216,29 +1174,6 @@ fn applyCommonMacros(mod: *std.Build.Module, cfg: *const BuildConfig) void {
     }
 }
 
-fn renderVersionRc(b: *std.Build) []const u8 {
-    return b.fmt(
-        \\1 VERSIONINFO
-        \\FILEVERSION VER_FILEVERSION
-        \\PRODUCTVERSION VER_FILEVERSION
-        \\BEGIN
-        \\  BLOCK "StringFileInfo"
-        \\  BEGIN
-        \\    BLOCK "040904E4"
-        \\    BEGIN
-        \\      VALUE "FileVersion", "{s}.0"
-        \\      VALUE "ProductVersion", "{s}.0"
-        \\    END
-        \\  END
-        \\  BLOCK "VarFileInfo"
-        \\  BEGIN
-        \\    VALUE "Translation", 0x0409, 1252
-        \\  END
-        \\END
-        \\
-    , .{ package_version_str, package_version_str });
-}
-
 fn formatSummary(b: *std.Build, cfg: *const BuildConfig, triple: []const u8) []const u8 {
     const char_summary = switch (cfg.char_type) {
         .char => "char (UTF-8)",
@@ -1326,142 +1261,3 @@ fn formatSummary(b: *std.Build, cfg: *const BuildConfig, triple: []const u8) []c
 fn onOff(val: bool) []const u8 {
     return if (val) "ON" else "OFF";
 }
-
-const zig_expat_test_zig =
-    \\const std = @import("std");
-    \\const expat = @import("expat");
-    \\
-    \\const State = struct {
-    \\    seen_root: bool = false,
-    \\};
-    \\
-    \\fn startElement(user_data: ?*anyopaque, name: [*c]const expat.XML_Char, atts: [*c]const [*c]const expat.XML_Char) callconv(.c) void {
-    \\    _ = name;
-    \\    _ = atts;
-    \\    const state: *State = @ptrCast(@alignCast(user_data.?));
-    \\    state.seen_root = true;
-    \\}
-    \\
-    \\test "expat parse from Zig" {
-    \\    const ver = expat.XML_ExpatVersionInfo();
-    \\    try std.testing.expectEqual(@as(c_int, 2), ver.major);
-    \\    try std.testing.expectEqual(@as(c_int, 10), ver.minor);
-    \\    try std.testing.expectEqual(@as(c_int, 0), ver.micro);
-    \\
-    \\    const parser = expat.XML_ParserCreate(null) orelse return error.OutOfMemory;
-    \\    defer expat.XML_ParserFree(parser);
-    \\
-    \\    var state: State = .{};
-    \\    expat.XML_SetUserData(parser, &state);
-    \\    expat.XML_SetElementHandler(parser, startElement, null);
-    \\
-    \\    const xml = "<root><child/></root>";
-    \\    const status = expat.XML_Parse(parser, xml.ptr, @intCast(xml.len), 1);
-    \\    try std.testing.expectEqual(@as(c_uint, expat.XML_STATUS_OK), status);
-    \\    try std.testing.expect(state.seen_root);
-    \\}
-    \\
-;
-
-const configure_file_helper_zig =
-    \\const std = @import("std");
-    \\
-    \\pub fn main(init: std.process.Init) !void {
-    \\    const arena = init.arena.allocator();
-    \\    const args = try init.minimal.args.toSlice(arena);
-    \\    if (args.len != 4) return error.InvalidArgs;
-    \\    const input_path = args[1];
-    \\    const output_path = args[2];
-    \\    const replacement = args[3];
-    \\
-    \\    const contents = if (std.fs.path.isAbsolute(input_path)) blk: {
-    \\        var file = try std.Io.Dir.openFileAbsolute(init.io, input_path, .{});
-    \\        defer file.close(init.io);
-    \\        var buf: [4096]u8 = undefined;
-    \\        var reader = file.reader(init.io, &buf);
-    \\        break :blk try reader.interface.allocRemaining(arena, .limited(1024 * 1024));
-    \\    } else try std.Io.Dir.cwd().readFileAlloc(
-    \\        init.io,
-    \\        input_path,
-    \\        arena,
-    \\        .limited(1024 * 1024),
-    \\    );
-    \\
-    \\    const replaced = try std.mem.replaceOwned(
-    \\        u8,
-    \\        arena,
-    \\        contents,
-    \\        "@_EXPAT_COMMENT_DTD_OR_GE@",
-    \\        replacement,
-    \\    );
-    \\
-    \\    if (std.fs.path.isAbsolute(output_path)) {
-    \\        var file = try std.Io.Dir.createFileAbsolute(init.io, output_path, .{});
-    \\        defer file.close(init.io);
-    \\        try file.writeStreamingAll(init.io, replaced);
-    \\    } else {
-    \\        try std.Io.Dir.cwd().writeFile(init.io, .{
-    \\            .sub_path = output_path,
-    \\            .data = replaced,
-    \\        });
-    \\    }
-    \\}
-    \\
-;
-
-const summary_helper_zig =
-    \\const std = @import("std");
-    \\const summary_text = @embedFile("summary.txt");
-    \\
-    \\pub fn main(init: std.process.Init) !void {
-    \\    var buf: [4096]u8 = undefined;
-    \\    var stdout_writer: std.Io.File.Writer = .init(.stdout(), init.io, &buf);
-    \\    try stdout_writer.interface.writeAll(summary_text);
-    \\    try stdout_writer.interface.flush();
-    \\}
-    \\
-;
-
-const fuzz_corpus_runner_c =
-    \\#include <stdint.h>
-    \\#include <stdio.h>
-    \\#include <stdlib.h>
-    \\
-    \\int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
-    \\
-    \\int main(int argc, char **argv) {
-    \\  if (argc <= 1) {
-    \\    const uint8_t empty = 0;
-    \\    LLVMFuzzerTestOneInput(&empty, 0);
-    \\    return 0;
-    \\  }
-    \\  for (int i = 1; i < argc; ++i) {
-    \\    FILE *f = fopen(argv[i], "rb");
-    \\    if (!f) {
-    \\      perror(argv[i]);
-    \\      return 1;
-    \\    }
-    \\    if (fseek(f, 0, SEEK_END) != 0) {
-    \\      fclose(f);
-    \\      return 1;
-    \\    }
-    \\    long len = ftell(f);
-    \\    if (len < 0) {
-    \\      fclose(f);
-    \\      return 1;
-    \\    }
-    \\    rewind(f);
-    \\    uint8_t *buf = len > 0 ? malloc((size_t)len) : NULL;
-    \\    if (len > 0 && !buf) {
-    \\      fclose(f);
-    \\      return 1;
-    \\    }
-    \\    size_t n = len > 0 ? fread(buf, 1, (size_t)len, f) : 0;
-    \\    fclose(f);
-    \\    LLVMFuzzerTestOneInput(buf ? buf : (const uint8_t *)"", n);
-    \\    free(buf);
-    \\  }
-    \\  return 0;
-    \\}
-    \\
-;

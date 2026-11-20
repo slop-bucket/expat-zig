@@ -1,0 +1,13 @@
+prefix={s}
+exec_prefix=${{prefix}}
+libdir=${{exec_prefix}}/lib
+includedir=${{prefix}}/include
+
+Name: expat{s}
+Version: {s}
+Description: expat XML parser
+URL: https://libexpat.github.io/
+Libs: -L${{libdir}} -l{s}
+Libs.private: {s}
+Cflags: -I${{includedir}}
+Cflags.private: -DXML_STATIC
