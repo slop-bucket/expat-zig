@@ -1,7 +1,7 @@
 .{
     .name = .expat,
     .version = "2.10.0",
-    .fingerprint = 0x13bc6dc511d3f5a,
+    .fingerprint = 0x460400c068d0a4bd,
     .minimum_zig_version = "0.17.1",
     .dependencies = .{
         .expat = .{
