@@ -21,12 +21,6 @@ const CharType = enum {
     wchar_t,
 };
 
-const EntropyOption = enum {
-    auto,
-    on,
-    off,
-};
-
 const EntropyKind = enum {
     arc4random,
     arc4random_buf,
@@ -157,30 +151,30 @@ pub fn build(b: *std.Build) void {
         "Include code reading entropy from /dev/urandom (EXPAT_DEV_URANDOM)",
     ) orelse (if (comptime @hasField(std.Target.Os.Tag, "aix")) target.result.os.tag == .aix else false);
     const with_arc4random = b.option(
-        EntropyOption,
+        bool,
         "with-arc4random",
-        "Make use of arc4random function: auto, on, off [default: auto]",
-    ) orelse .auto;
+        "Make use of arc4random function [default: auto-detect]",
+    );
     const with_arc4random_buf = b.option(
-        EntropyOption,
+        bool,
         "with-arc4random-buf",
-        "Make use of arc4random_buf function: auto, on, off [default: auto]",
-    ) orelse .auto;
+        "Make use of arc4random_buf function [default: auto-detect]",
+    );
     const with_getentropy = b.option(
-        EntropyOption,
+        bool,
         "with-getentropy",
-        "Make use of getentropy function: auto, on, off [default: auto]",
-    ) orelse .auto;
+        "Make use of getentropy function [default: auto-detect]",
+    );
     const with_getrandom = b.option(
-        EntropyOption,
+        bool,
         "with-getrandom",
-        "Make use of getrandom function: auto, on, off [default: auto]",
-    ) orelse .auto;
+        "Make use of getrandom function [default: auto-detect]",
+    );
     const with_sys_getrandom = b.option(
-        EntropyOption,
+        bool,
         "with-sys-getrandom",
-        "Make use of syscall SYS_getrandom: auto, on, off [default: auto]",
-    ) orelse .auto;
+        "Make use of syscall SYS_getrandom [default: auto-detect]",
+    );
 
     const build_tools = build_tools_opt orelse
         (char_type == .char or (char_type == .wchar_t and target.result.os.tag == .windows));
@@ -918,7 +912,7 @@ fn detectEntropy(t: std.Target, kind: EntropyKind) bool {
 fn resolveEntropy(
     b: *std.Build,
     t: std.Target,
-    opt: EntropyOption,
+    opt: ?bool,
     kind: EntropyKind,
     thing_lower: []const u8,
     opt_name: []const u8,
@@ -926,18 +920,17 @@ fn resolveEntropy(
 ) ?bool {
     if (t.os.tag == .windows) return false;
     const detected = detectEntropy(t, kind);
-    return switch (opt) {
-        .auto => detected,
-        .on => if (detected) true else {
-            failBuild(b, b.fmt("Use of {s} was enforced by -D{s}=on but it is not available on target {s}.", .{
-                thing_lower,
-                opt_name,
-                triple,
-            }));
-            return null;
-        },
-        .off => false,
-    };
+    if (opt) |enforced| {
+        if (!enforced) return false;
+        if (detected) return true;
+        failBuild(b, b.fmt("Use of {s} was enforced by -D{s}=true but it is not available on target {s}.", .{
+            thing_lower,
+            opt_name,
+            triple,
+        }));
+        return null;
+    }
+    return detected;
 }
 
 fn failBuild(b: *std.Build, msg: []const u8) void {
