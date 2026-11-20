@@ -35,39 +35,6 @@ const EntropyKind = enum {
     syscall_getrandom,
 };
 
-const BuildConfig = struct {
-    target: std.Build.ResolvedTarget,
-    shared: bool,
-    char_type: CharType,
-    short_wchar: bool,
-    unicode: bool,
-    unicode_wchar_t: bool,
-    large_size: bool,
-    enable_dtd: bool,
-    enable_ge: bool,
-    enable_ns: bool,
-    context_bytes: u32,
-    warnings_as_errors: bool,
-    symbol_versioning: bool,
-    enable_install: bool,
-    build_tools: bool,
-    build_examples: bool,
-    build_tests: bool,
-    build_docs: bool,
-    build_fuzzers: bool,
-    ossfuzz_build: bool,
-    build_pkgconfig: bool,
-    pkgconfig_prefix: []const u8,
-    dev_urandom: bool,
-    have_arc4random: bool,
-    have_arc4random_buf: bool,
-    have_getentropy: bool,
-    have_getrandom: bool,
-    have_syscall_getrandom: bool,
-    postfix: []const u8,
-    output_name: []const u8,
-};
-
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -294,39 +261,7 @@ pub fn build(b: *std.Build) void {
     });
     const postfix = postfix_opt orelse default_postfix;
     const output_name = if (target.result.os.tag == .windows and target.result.abi != .gnu) "libexpat" else "expat";
-
-    const cfg: BuildConfig = .{
-        .target = target,
-        .shared = shared,
-        .char_type = char_type,
-        .short_wchar = short_wchar,
-        .unicode = unicode,
-        .unicode_wchar_t = unicode_wchar_t,
-        .large_size = large_size,
-        .enable_dtd = enable_dtd,
-        .enable_ge = enable_ge,
-        .enable_ns = enable_ns,
-        .context_bytes = context_bytes,
-        .warnings_as_errors = warnings_as_errors,
-        .symbol_versioning = symbol_versioning,
-        .enable_install = enable_install,
-        .build_tools = build_tools,
-        .build_examples = build_examples,
-        .build_tests = build_tests,
-        .build_docs = build_docs,
-        .build_fuzzers = build_fuzzers,
-        .ossfuzz_build = ossfuzz_build,
-        .build_pkgconfig = build_pkgconfig,
-        .pkgconfig_prefix = pkgconfig_prefix,
-        .dev_urandom = if (target.result.os.tag == .windows) false else dev_urandom_opt,
-        .have_arc4random = have_arc4random,
-        .have_arc4random_buf = have_arc4random_buf,
-        .have_getentropy = have_getentropy,
-        .have_getrandom = have_getrandom,
-        .have_syscall_getrandom = have_syscall_getrandom,
-        .postfix = postfix,
-        .output_name = output_name,
-    };
+    const dev_urandom = if (target.result.os.tag == .windows) false else dev_urandom_opt;
 
     const expat_dep = b.dependency("expat", .{});
     const expat_root = expat_dep.path("expat");
@@ -338,13 +273,13 @@ pub fn build(b: *std.Build) void {
         .include_path = "expat_config.h",
     }, .{
         .BYTEORDER = @as(i64, if (target.result.cpu.arch.endian() == .big) 4321 else 1234),
-        .HAVE_ARC4RANDOM = boolDefine(cfg.have_arc4random),
-        .HAVE_ARC4RANDOM_BUF = boolDefine(cfg.have_arc4random_buf),
+        .HAVE_ARC4RANDOM = boolDefine(have_arc4random),
+        .HAVE_ARC4RANDOM_BUF = boolDefine(have_arc4random_buf),
         .HAVE_DLFCN_H = boolDefine(target.result.os.tag != .windows and target.result.os.tag != .wasi),
         .HAVE_FCNTL_H = boolDefine(true),
         .HAVE_GETPAGESIZE = boolDefine(target.result.os.tag != .windows and target.result.os.tag != .wasi),
-        .HAVE_GETRANDOM = boolDefine(cfg.have_getrandom),
-        .HAVE_GETENTROPY = boolDefine(cfg.have_getentropy),
+        .HAVE_GETRANDOM = boolDefine(have_getrandom),
+        .HAVE_GETENTROPY = boolDefine(have_getentropy),
         .HAVE_INTTYPES_H = boolDefine(true),
         .HAVE_MEMORY_H = boolDefine(true),
         .HAVE_MMAP = boolDefine(target.result.os.tag != .windows and target.result.os.tag != .wasi),
@@ -352,7 +287,7 @@ pub fn build(b: *std.Build) void {
         .HAVE_STDLIB_H = boolDefine(true),
         .HAVE_STRINGS_H = boolDefine(!(target.result.os.tag == .windows and target.result.abi == .msvc)),
         .HAVE_STRING_H = boolDefine(true),
-        .HAVE_SYSCALL_GETRANDOM = boolDefine(cfg.have_syscall_getrandom),
+        .HAVE_SYSCALL_GETRANDOM = boolDefine(have_syscall_getrandom),
         .HAVE_SYS_STAT_H = boolDefine(true),
         .HAVE_SYS_TYPES_H = boolDefine(true),
         .HAVE_UNISTD_H = boolDefine(!(target.result.os.tag == .windows and target.result.abi == .msvc)),
@@ -365,36 +300,45 @@ pub fn build(b: *std.Build) void {
         .PACKAGE_VERSION = package_version_str,
         .STDC_HEADERS = boolDefine(true),
         .WORDS_BIGENDIAN = boolDefine(target.result.cpu.arch.endian() == .big),
-        .XML_CONTEXT_BYTES = @as(i64, cfg.context_bytes),
-        .XML_DEV_URANDOM = boolDefine(target.result.os.tag != .windows and cfg.dev_urandom),
-        .XML_DTD = boolDefine(cfg.enable_dtd),
-        .XML_GE = @as(i64, if (cfg.enable_ge) 1 else 0),
-        .XML_NS = boolDefine(cfg.enable_ns),
+        .XML_CONTEXT_BYTES = @as(i64, context_bytes),
+        .XML_DEV_URANDOM = boolDefine(target.result.os.tag != .windows and dev_urandom),
+        .XML_DTD = boolDefine(enable_dtd),
+        .XML_GE = @as(i64, if (enable_ge) 1 else 0),
+        .XML_NS = boolDefine(enable_ns),
         .off_t = @as(?enum { long }, null),
     });
 
     // Compiler flags and source file list.
-    const c_flags = buildCFlags(b, &cfg);
-    const expat_c_sources = buildExpatCSources(b, &cfg);
+    const c_flags = buildCFlags(b, target.result, unicode_wchar_t, short_wchar, warnings_as_errors);
+    const expat_c_sources = buildExpatCSources(
+        b,
+        target.result,
+        dev_urandom,
+        have_arc4random,
+        have_arc4random_buf,
+        have_getentropy,
+        have_getrandom,
+        have_syscall_getrandom,
+    );
 
     // Exported Zig configuration module (port of ref/expat-config.cmake.in).
     const config_opts = b.addOptions();
     config_opts.addOption([]const u8, "version", package_version_str);
     config_opts.addOption(bool, "attr_info", false);
     config_opts.addOption(bool, "min_size", false);
-    config_opts.addOption(bool, "dtd", cfg.enable_dtd);
-    config_opts.addOption(bool, "ge", cfg.enable_ge);
-    config_opts.addOption(bool, "ns", cfg.enable_ns);
-    config_opts.addOption(bool, "large_size", cfg.large_size);
-    config_opts.addOption(u32, "context_bytes", cfg.context_bytes);
-    config_opts.addOption(CharType, "char_type", cfg.char_type);
-    config_opts.addOption(bool, "shared", cfg.shared);
+    config_opts.addOption(bool, "dtd", enable_dtd);
+    config_opts.addOption(bool, "ge", enable_ge);
+    config_opts.addOption(bool, "ns", enable_ns);
+    config_opts.addOption(bool, "large_size", large_size);
+    config_opts.addOption(u32, "context_bytes", context_bytes);
+    config_opts.addOption(CharType, "char_type", char_type);
+    config_opts.addOption(bool, "shared", shared);
     _ = b.addModule("config", .{
         .root_source_file = config_opts.getOutput(),
     });
 
     // Main C library target: expat.
-    const lib_name = b.fmt("{s}{s}", .{ cfg.output_name, cfg.postfix });
+    const lib_name = b.fmt("{s}{s}", .{ output_name, postfix });
     const lib_mod = b.createModule(.{
         .target = target,
         .optimize = optimize,
@@ -402,8 +346,8 @@ pub fn build(b: *std.Build) void {
     });
     lib_mod.addConfigHeader(config_header);
     lib_mod.addIncludePath(lib_inc);
-    applyCommonMacros(lib_mod, &cfg);
-    if (target.result.os.tag == .windows and !cfg.shared) {
+    applyCommonMacros(lib_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
+    if (target.result.os.tag == .windows and !shared) {
         lib_mod.addCMacro("XML_STATIC", "1");
     }
     lib_mod.addCSourceFiles(.{
@@ -415,9 +359,9 @@ pub fn build(b: *std.Build) void {
         lib_mod.linkSystemLibrary("m", .{});
     }
 
-    const dtd_or_ge = cfg.enable_dtd or cfg.enable_ge;
+    const dtd_or_ge = enable_dtd or enable_ge;
     var win32_def_file: ?std.Build.LazyPath = null;
-    if (target.result.os.tag == .windows and cfg.shared) {
+    if (target.result.os.tag == .windows and shared) {
         const dll_ver = b.fmt("-DVER_FILEVERSION={d},{d},{d},0", .{
             package_version.major,
             package_version.minor,
@@ -439,8 +383,8 @@ pub fn build(b: *std.Build) void {
 
     const lib = b.addLibrary(.{
         .name = lib_name,
-        .linkage = if (cfg.shared) .dynamic else .static,
-        .version = if (cfg.shared and target.result.os.tag != .windows)
+        .linkage = if (shared) .dynamic else .static,
+        .version = if (shared and target.result.os.tag != .windows)
             .{
                 .major = lib_current_minus_age,
                 .minor = lib_age,
@@ -452,7 +396,7 @@ pub fn build(b: *std.Build) void {
         .root_module = lib_mod,
     });
 
-    if (target.result.os.tag != .windows and cfg.shared and cfg.symbol_versioning) {
+    if (target.result.os.tag != .windows and shared and symbol_versioning) {
         const map_file = addConfiguredTemplate(
             b,
             expat_dep.path("expat/lib/libexpat.map.in"),
@@ -466,7 +410,7 @@ pub fn build(b: *std.Build) void {
     lib.installHeader(expat_dep.path("expat/lib/expat_external.h"), "expat_external.h");
     lib.installConfigHeader(config_header);
 
-    if (cfg.enable_install) {
+    if (enable_install) {
         b.installArtifact(lib);
     } else {
         b.getInstallStep().dependOn(&lib.step);
@@ -482,20 +426,20 @@ pub fn build(b: *std.Build) void {
     });
     expat_translator.addIncludePath(lib_inc);
     expat_translator.linkLibrary(lib);
-    if (cfg.large_size) {
+    if (large_size) {
         expat_translator.defineCMacro("XML_LARGE_SIZE", "1");
     }
-    if (cfg.unicode) {
+    if (unicode) {
         expat_translator.defineCMacro("XML_UNICODE", "1");
-        if (cfg.unicode_wchar_t) {
+        if (unicode_wchar_t) {
             expat_translator.defineCMacro("XML_UNICODE_WCHAR_T", "1");
         }
     }
-    if (cfg.enable_dtd) {
+    if (enable_dtd) {
         expat_translator.defineCMacro("XML_DTD", "1");
     }
-    expat_translator.defineCMacro("XML_GE", if (cfg.enable_ge) "1" else "0");
-    if (target.result.os.tag == .windows and !cfg.shared) {
+    expat_translator.defineCMacro("XML_GE", if (enable_ge) "1" else "0");
+    if (target.result.os.tag == .windows and !shared) {
         expat_translator.defineCMacro("XML_STATIC", "1");
     }
     b.modules.put(b.allocator, b.dupe("expat"), expat_translator.mod) catch @panic("OOM");
@@ -506,7 +450,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     zig_test_mod.addImport("expat", expat_translator.mod);
-    if (cfg.shared and target.result.os.tag != .windows) {
+    if (shared and target.result.os.tag != .windows) {
         if (target.result.os.tag.isDarwin()) {
             zig_test_mod.addRPathSpecial("@loader_path/../lib");
         } else if (target.result.os.tag != .wasi) {
@@ -522,22 +466,22 @@ pub fn build(b: *std.Build) void {
     zig_test_step.dependOn(&run_zig_test.step);
 
     // pkg-config file (expat.pc).
-    if (cfg.build_pkgconfig) {
+    if (build_pkgconfig) {
         const pc_content = b.fmt(@embedFile("build/expat.pc.in"), .{
-            cfg.pkgconfig_prefix,
-            cfg.postfix,
+            pkgconfig_prefix,
+            postfix,
             package_version_str,
             lib_name,
             if (target.result.os.tag != .windows and target.result.os.tag != .wasi and target.result.os.tag != .freestanding) "-lm" else "",
         });
         const pc_file = b.addWriteFiles().add("expat.pc", pc_content);
-        if (cfg.enable_install) {
+        if (enable_install) {
             b.getInstallStep().dependOn(&b.addInstallLibFile(pc_file, "pkgconfig/expat.pc").step);
         }
     }
 
     // Documentation files (AUTHORS, changelog, optional xmlwf.1 man page).
-    if (cfg.enable_install) {
+    if (enable_install) {
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(
             expat_dep.path("expat/AUTHORS"),
             .prefix,
@@ -552,7 +496,7 @@ pub fn build(b: *std.Build) void {
 
     // Tools: xmlwf and gennmtab.
     var xmlwf_exe: ?*std.Build.Step.Compile = null;
-    if (cfg.build_tools) {
+    if (build_tools) {
         const xmlwf_mod = b.createModule(.{
             .target = target,
             .optimize = optimize,
@@ -561,8 +505,8 @@ pub fn build(b: *std.Build) void {
         xmlwf_mod.addConfigHeader(config_header);
         xmlwf_mod.addIncludePath(lib_inc);
         xmlwf_mod.addIncludePath(expat_dep.path("expat/xmlwf"));
-        applyCommonMacros(xmlwf_mod, &cfg);
-        if (target.result.os.tag == .windows and !cfg.shared) {
+        applyCommonMacros(xmlwf_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
+        if (target.result.os.tag == .windows and !shared) {
             xmlwf_mod.addCMacro("XML_STATIC", "1");
         }
         xmlwf_mod.addCSourceFiles(.{
@@ -580,7 +524,7 @@ pub fn build(b: *std.Build) void {
         if (needsLibm(target.result)) {
             xmlwf_mod.linkSystemLibrary("m", .{});
         }
-        if (cfg.shared and target.result.os.tag != .windows) {
+        if (shared and target.result.os.tag != .windows) {
             if (target.result.os.tag.isDarwin()) {
                 xmlwf_mod.addRPathSpecial("@loader_path/../lib");
             } else if (target.result.os.tag != .wasi) {
@@ -592,12 +536,12 @@ pub fn build(b: *std.Build) void {
             .name = "xmlwf",
             .root_module = xmlwf_mod,
         });
-        if (target.result.os.tag == .windows and target.result.abi == .gnu and cfg.unicode_wchar_t) {
+        if (target.result.os.tag == .windows and target.result.abi == .gnu and unicode_wchar_t) {
             xmlwf.mingw_unicode_entry_point = true;
         }
         xmlwf_exe = xmlwf;
 
-        if (cfg.enable_install) {
+        if (enable_install) {
             b.installArtifact(xmlwf);
         } else {
             b.getInstallStep().dependOn(&xmlwf.step);
@@ -616,7 +560,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
             .sanitize_c = .off,
         });
-        applyCommonMacros(gennmtab_mod, &cfg);
+        applyCommonMacros(gennmtab_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
         gennmtab_mod.addCSourceFiles(.{
             .root = expat_root,
             .files = &.{"gennmtab/gennmtab.c"},
@@ -633,7 +577,7 @@ pub fn build(b: *std.Build) void {
         const gennmtab_step = b.step("gennmtab", "Run the gennmtab table generator");
         gennmtab_step.dependOn(&run_gennmtab.step);
 
-        if (cfg.build_docs) {
+        if (build_docs) {
             if (docbook_to_man) |tool| {
                 const man_step = b.addSystemCommand(&.{
                     "sh",
@@ -646,7 +590,7 @@ pub fn build(b: *std.Build) void {
                 man_step.addFileArg(expat_dep.path("expat/doc/xmlwf.xml"));
 
                 b.getInstallStep().dependOn(&man_step.step);
-                if (cfg.enable_install) {
+                if (enable_install) {
                     const man_file = out_dir.path(b, "xmlwf.1");
                     b.getInstallStep().dependOn(&b.addInstallFileWithDir(
                         man_file,
@@ -659,7 +603,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // Examples: element_declarations, elements, outline.
-    if (cfg.build_examples) {
+    if (build_examples) {
         const examples_step = b.step("examples", "Build and install Expat example programs to zig-out/examples");
         const example_names = [_][]const u8{
             "element_declarations",
@@ -673,8 +617,8 @@ pub fn build(b: *std.Build) void {
                 .link_libc = true,
             });
             ex_mod.addIncludePath(lib_inc);
-            applyCommonMacros(ex_mod, &cfg);
-            if (target.result.os.tag == .windows and !cfg.shared) {
+            applyCommonMacros(ex_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
+            if (target.result.os.tag == .windows and !shared) {
                 ex_mod.addCMacro("XML_STATIC", "1");
             }
             ex_mod.addCSourceFiles(.{
@@ -683,7 +627,7 @@ pub fn build(b: *std.Build) void {
                 .flags = c_flags,
             });
             ex_mod.linkLibrary(lib);
-            if (cfg.shared and target.result.os.tag != .windows) {
+            if (shared and target.result.os.tag != .windows) {
                 if (target.result.os.tag.isDarwin()) {
                     ex_mod.addRPathSpecial("@loader_path/../lib");
                 } else if (target.result.os.tag != .wasi) {
@@ -705,7 +649,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // Tests: runtests + benchmark.
-    if (cfg.build_tests) {
+    if (build_tests) {
         const test_sources = [_][]const u8{
             "tests/acc_tests.c",
             "tests/alloc_tests.c",
@@ -737,7 +681,7 @@ pub fn build(b: *std.Build) void {
         runtests_mod.addConfigHeader(config_header);
         runtests_mod.addIncludePath(lib_inc);
         runtests_mod.addIncludePath(expat_dep.path("expat/tests"));
-        applyCommonMacros(runtests_mod, &cfg);
+        applyCommonMacros(runtests_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
         runtests_mod.addCMacro("XML_TESTING", "1");
         if (target.result.os.tag == .windows) {
             runtests_mod.addCMacro("XML_STATIC", "1");
@@ -774,8 +718,8 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         });
         bench_mod.addIncludePath(lib_inc);
-        applyCommonMacros(bench_mod, &cfg);
-        if (target.result.os.tag == .windows and !cfg.shared) {
+        applyCommonMacros(bench_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
+        if (target.result.os.tag == .windows and !shared) {
             bench_mod.addCMacro("XML_STATIC", "1");
         }
         bench_mod.addCSourceFiles(.{
@@ -784,7 +728,7 @@ pub fn build(b: *std.Build) void {
             .flags = c_flags,
         });
         bench_mod.linkLibrary(lib);
-        if (cfg.shared and target.result.os.tag != .windows) {
+        if (shared and target.result.os.tag != .windows) {
             if (target.result.os.tag.isDarwin()) {
                 bench_mod.addRPathSpecial("@loader_path/../lib");
             } else if (target.result.os.tag != .wasi) {
@@ -804,7 +748,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // W3C XML conformance suite (run-xmltest).
-    if (cfg.build_tools and !(target.result.os.tag == .windows and target.result.abi == .msvc)) {
+    if (build_tools and !(target.result.os.tag == .windows and target.result.abi == .msvc)) {
         if (xmlwf_exe) |xmlwf| {
             const xmltest_cmd = b.addSystemCommand(&.{"sh"});
             xmltest_cmd.addFileArg(b.path("build/run_xmltest.sh"));
@@ -817,16 +761,16 @@ pub fn build(b: *std.Build) void {
     }
 
     // Fuzzers (fuzzpat + libFuzzer targets; xml_lpm_fuzzer requires external protobuf/LPM).
-    if (cfg.build_fuzzers) {
+    if (build_fuzzers) {
         const fuzzpat_mod = b.createModule(.{
             .target = target,
             .optimize = optimize,
             .link_libc = true,
-            .fuzz = if (!cfg.ossfuzz_build) true else null,
+            .fuzz = if (!ossfuzz_build) true else null,
         });
         fuzzpat_mod.addConfigHeader(config_header);
         fuzzpat_mod.addIncludePath(lib_inc);
-        applyCommonMacros(fuzzpat_mod, &cfg);
+        applyCommonMacros(fuzzpat_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
         if (target.result.os.tag == .windows) {
             fuzzpat_mod.addCMacro("XML_STATIC", "1");
         }
@@ -864,10 +808,10 @@ pub fn build(b: *std.Build) void {
                     .target = target,
                     .optimize = optimize,
                     .link_libc = true,
-                    .fuzz = if (!cfg.ossfuzz_build) true else null,
+                    .fuzz = if (!ossfuzz_build) true else null,
                 });
                 fuzzer_mod.addIncludePath(lib_inc);
-                applyCommonMacros(fuzzer_mod, &cfg);
+                applyCommonMacros(fuzzer_mod, target.result, shared, large_size, unicode, unicode_wchar_t);
                 fuzzer_mod.addCMacro("ENCODING_FOR_FUZZING", enc);
                 if (target.result.os.tag == .windows) {
                     fuzzer_mod.addCMacro("XML_STATIC", "1");
@@ -1020,27 +964,42 @@ fn boolDefine(val: bool) ?i64 {
     return if (val) 1 else null;
 }
 
-fn buildCFlags(b: *std.Build, cfg: *const BuildConfig) []const []const u8 {
+fn buildCFlags(
+    b: *std.Build,
+    t: std.Target,
+    unicode_wchar_t: bool,
+    short_wchar: bool,
+    warnings_as_errors: bool,
+) []const []const u8 {
     var flags: std.ArrayList([]const u8) = .empty;
     flags.append(b.allocator, "-std=c99") catch @panic("OOM");
     flags.append(b.allocator, "-fno-strict-aliasing") catch @panic("OOM");
     flags.append(b.allocator, "-Wimplicit-fallthrough") catch @panic("OOM");
-    if (cfg.target.result.os.tag != .windows) {
+    if (t.os.tag != .windows) {
         flags.append(b.allocator, "-fvisibility=hidden") catch @panic("OOM");
     }
-    if (cfg.unicode_wchar_t and cfg.target.result.os.tag != .windows and cfg.short_wchar) {
+    if (unicode_wchar_t and t.os.tag != .windows and short_wchar) {
         flags.append(b.allocator, "-fshort-wchar") catch @panic("OOM");
     }
-    if (cfg.warnings_as_errors) {
+    if (warnings_as_errors) {
         flags.append(b.allocator, "-Werror") catch @panic("OOM");
-        if (cfg.target.result.os.tag == .windows and cfg.target.result.abi == .gnu) {
+        if (t.os.tag == .windows and t.abi == .gnu) {
             flags.append(b.allocator, "-Wno-format") catch @panic("OOM");
         }
     }
     return flags.items;
 }
 
-fn buildExpatCSources(b: *std.Build, cfg: *const BuildConfig) []const []const u8 {
+fn buildExpatCSources(
+    b: *std.Build,
+    t: std.Target,
+    dev_urandom: bool,
+    have_arc4random: bool,
+    have_arc4random_buf: bool,
+    have_getentropy: bool,
+    have_getrandom: bool,
+    have_syscall_getrandom: bool,
+) []const []const u8 {
     var srcs: std.ArrayList([]const u8) = .empty;
     srcs.appendSlice(b.allocator, &.{
         "lib/xcs.c",
@@ -1048,41 +1007,48 @@ fn buildExpatCSources(b: *std.Build, cfg: *const BuildConfig) []const []const u8
         "lib/xmlrole.c",
         "lib/xmltok.c",
     }) catch @panic("OOM");
-    if (cfg.have_arc4random) {
+    if (have_arc4random) {
         srcs.append(b.allocator, "lib/random_arc4random.c") catch @panic("OOM");
     }
-    if (cfg.have_arc4random_buf) {
+    if (have_arc4random_buf) {
         srcs.append(b.allocator, "lib/random_arc4random_buf.c") catch @panic("OOM");
     }
-    if (cfg.target.result.os.tag != .windows and cfg.dev_urandom) {
+    if (t.os.tag != .windows and dev_urandom) {
         srcs.append(b.allocator, "lib/random_dev_urandom.c") catch @panic("OOM");
     }
-    if (cfg.have_getentropy) {
+    if (have_getentropy) {
         srcs.append(b.allocator, "lib/random_getentropy.c") catch @panic("OOM");
     }
-    if (cfg.have_getrandom or cfg.have_syscall_getrandom) {
+    if (have_getrandom or have_syscall_getrandom) {
         srcs.append(b.allocator, "lib/random_getrandom.c") catch @panic("OOM");
     }
-    if (cfg.target.result.os.tag == .windows) {
+    if (t.os.tag == .windows) {
         srcs.append(b.allocator, "lib/random_rand_s.c") catch @panic("OOM");
     }
     return srcs.items;
 }
 
-fn applyCommonMacros(mod: *std.Build.Module, cfg: *const BuildConfig) void {
-    if (cfg.large_size) {
+fn applyCommonMacros(
+    mod: *std.Build.Module,
+    t: std.Target,
+    shared: bool,
+    large_size: bool,
+    unicode: bool,
+    unicode_wchar_t: bool,
+) void {
+    if (large_size) {
         mod.addCMacro("XML_LARGE_SIZE", "1");
     }
-    if (cfg.unicode) {
+    if (unicode) {
         mod.addCMacro("XML_UNICODE", "1");
-        if (cfg.unicode_wchar_t) {
+        if (unicode_wchar_t) {
             mod.addCMacro("XML_UNICODE_WCHAR_T", "1");
         }
     }
-    if (cfg.target.result.os.tag != .windows and cfg.shared) {
+    if (t.os.tag != .windows and shared) {
         mod.addCMacro("XML_ENABLE_VISIBILITY", "1");
     }
-    if (cfg.target.result.os.tag == .windows and cfg.target.result.abi == .msvc) {
+    if (t.os.tag == .windows and t.abi == .msvc) {
         mod.addCMacro("_CRT_SECURE_NO_WARNINGS", "1");
     }
 }
