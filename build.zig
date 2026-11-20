@@ -27,42 +27,16 @@ const EntropyOption = enum {
     off,
 };
 
-const PlatformInfo = struct {
-    is_windows: bool,
-    is_mingw: bool,
-    is_msvc: bool,
-    is_darwin: bool,
-    is_wasi: bool,
-    is_big_endian: bool,
-    link_libm: bool,
-    pkgconfig_libm: bool,
-
-    have_dlfcn_h: bool,
-    have_fcntl_h: bool,
-    have_inttypes_h: bool,
-    have_memory_h: bool,
-    have_stdint_h: bool,
-    have_stdlib_h: bool,
-    have_strings_h: bool,
-    have_string_h: bool,
-    have_sys_stat_h: bool,
-    have_sys_types_h: bool,
-    have_unistd_h: bool,
-    stdc_headers: bool,
-    have_off_t: bool,
-    have_getpagesize: bool,
-    have_mmap: bool,
-
-    detect_arc4random: bool,
-    detect_arc4random_buf: bool,
-    detect_getentropy: bool,
-    detect_getrandom: bool,
-    detect_syscall_getrandom: bool,
+const EntropyKind = enum {
+    arc4random,
+    arc4random_buf,
+    getentropy,
+    getrandom,
+    syscall_getrandom,
 };
 
 const BuildConfig = struct {
     target: std.Build.ResolvedTarget,
-    platform: PlatformInfo,
     shared: bool,
     char_type: CharType,
     short_wchar: bool,
@@ -97,7 +71,6 @@ const BuildConfig = struct {
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const platform = detectPlatform(target.result);
 
     // Note: EXPAT_ATTR_INFO and EXPAT_MIN_SIZE were removed upstream; Zig's CLI
     // rejects unknown -D options directly. _EXPAT_M32 is superseded by -Dtarget.
@@ -158,7 +131,7 @@ pub fn build(b: *std.Build) void {
         bool,
         "build-pkgconfig",
         "Build pkg-config file (EXPAT_BUILD_PKGCONFIG)",
-    ) orelse !platform.is_msvc;
+    ) orelse !(target.result.os.tag == .windows and target.result.abi == .msvc);
     const pkgconfig_prefix = b.option(
         []const u8,
         "pkgconfig-prefix",
@@ -243,11 +216,11 @@ pub fn build(b: *std.Build) void {
     ) orelse .auto;
 
     const build_tools = build_tools_opt orelse
-        (char_type == .char or (char_type == .wchar_t and platform.is_windows));
+        (char_type == .char or (char_type == .wchar_t and target.result.os.tag == .windows));
     const build_examples = build_examples_opt orelse (char_type != .ushort);
     const build_tests = build_tests_opt orelse (char_type != .ushort);
 
-    const docbook_to_man: ?[]const u8 = if (build_tools and !platform.is_msvc and build_docs_opt != false)
+    const docbook_to_man: ?[]const u8 = if (build_tools and !(target.result.os.tag == .windows and target.result.abi == .msvc) and build_docs_opt != false)
         b.findProgram(.{
             .names = &.{ "docbook2x-man", "db2x_docbook2man", "docbook2man", "docbook-to-man" },
         })
@@ -270,7 +243,7 @@ pub fn build(b: *std.Build) void {
         if (build_tools_opt == true) {
             return failBuild(b, "The xmlwf tool can not be built with -Dchar-type=ushort. Please pass -Dchar-type=(char|wchar_t) or -Dbuild-tools=false.");
         }
-    } else if (char_type == .wchar_t and !platform.is_windows) {
+    } else if (char_type == .wchar_t and target.result.os.tag != .windows) {
         if (!short_wchar) {
             return failBuild(b, "Configuration -Dchar-type=wchar_t on non-Windows requires -Dshort-wchar=true (-fshort-wchar) and libc compiled with -fshort-wchar, too.");
         }
@@ -287,7 +260,7 @@ pub fn build(b: *std.Build) void {
         if (!build_tools) {
             return failBuild(b, "Option -Dbuild-docs=true requires -Dbuild-tools=true.");
         }
-        if (platform.is_msvc) {
+        if (target.result.os.tag == .windows and target.result.abi == .msvc) {
             return failBuild(b, "Option -Dbuild-docs=true is not supported with MSVC targets.");
         }
         if (docbook_to_man == null) {
@@ -295,16 +268,16 @@ pub fn build(b: *std.Build) void {
         }
     }
 
-    if (symbol_versioning and shared and (platform.is_windows or platform.is_darwin)) {
+    if (symbol_versioning and shared and (target.result.os.tag == .windows or target.result.os.tag.isDarwin())) {
         return failBuild(b, "Option -Dsymbol-versioning=true uses an ELF linker version script (libexpat.map) and is only supported on ELF shared libraries.");
     }
 
     const triple_alloc = target.result.zigTriple(b.allocator) catch @panic("OOM");
-    const have_arc4random = resolveEntropy(b, platform.is_windows, with_arc4random, platform.detect_arc4random, "function arc4random", "with-arc4random", triple_alloc) orelse return;
-    const have_arc4random_buf = resolveEntropy(b, platform.is_windows, with_arc4random_buf, platform.detect_arc4random_buf, "function arc4random_buf", "with-arc4random-buf", triple_alloc) orelse return;
-    const have_getentropy = resolveEntropy(b, platform.is_windows, with_getentropy, platform.detect_getentropy, "function getentropy", "with-getentropy", triple_alloc) orelse return;
-    const have_getrandom = resolveEntropy(b, platform.is_windows, with_getrandom, platform.detect_getrandom, "function getrandom", "with-getrandom", triple_alloc) orelse return;
-    const have_syscall_getrandom = resolveEntropy(b, platform.is_windows, with_sys_getrandom, platform.detect_syscall_getrandom, "syscall SYS_getrandom", "with-sys-getrandom", triple_alloc) orelse return;
+    const have_arc4random = resolveEntropy(b, target.result, with_arc4random, .arc4random, "function arc4random", "with-arc4random", triple_alloc) orelse return;
+    const have_arc4random_buf = resolveEntropy(b, target.result, with_arc4random_buf, .arc4random_buf, "function arc4random_buf", "with-arc4random-buf", triple_alloc) orelse return;
+    const have_getentropy = resolveEntropy(b, target.result, with_getentropy, .getentropy, "function getentropy", "with-getentropy", triple_alloc) orelse return;
+    const have_getrandom = resolveEntropy(b, target.result, with_getrandom, .getrandom, "function getrandom", "with-getrandom", triple_alloc) orelse return;
+    const have_syscall_getrandom = resolveEntropy(b, target.result, with_sys_getrandom, .syscall_getrandom, "syscall SYS_getrandom", "with-sys-getrandom", triple_alloc) orelse return;
 
     const fuzzing_engine: ?[]const u8 = if (build_fuzzers and ossfuzz_build)
         b.graph.environ_map.get("LIB_FUZZING_ENGINE") orelse {
@@ -317,14 +290,13 @@ pub fn build(b: *std.Build) void {
     const unicode_wchar_t = char_type == .wchar_t;
     const default_postfix = b.fmt("{s}{s}", .{
         if (unicode) "w" else "",
-        if (platform.is_windows and optimize == .debug) "d" else "",
+        if (target.result.os.tag == .windows and optimize == .debug) "d" else "",
     });
     const postfix = postfix_opt orelse default_postfix;
-    const output_name = if (platform.is_windows and !platform.is_mingw) "libexpat" else "expat";
+    const output_name = if (target.result.os.tag == .windows and target.result.abi != .gnu) "libexpat" else "expat";
 
     const cfg: BuildConfig = .{
         .target = target,
-        .platform = platform,
         .shared = shared,
         .char_type = char_type,
         .short_wchar = short_wchar,
@@ -346,7 +318,7 @@ pub fn build(b: *std.Build) void {
         .ossfuzz_build = ossfuzz_build,
         .build_pkgconfig = build_pkgconfig,
         .pkgconfig_prefix = pkgconfig_prefix,
-        .dev_urandom = if (platform.is_windows) false else dev_urandom_opt,
+        .dev_urandom = if (target.result.os.tag == .windows) false else dev_urandom_opt,
         .have_arc4random = have_arc4random,
         .have_arc4random_buf = have_arc4random_buf,
         .have_getentropy = have_getentropy,
@@ -365,25 +337,25 @@ pub fn build(b: *std.Build) void {
         .style = .blank,
         .include_path = "expat_config.h",
     }, .{
-        .BYTEORDER = @as(i64, if (platform.is_big_endian) 4321 else 1234),
+        .BYTEORDER = @as(i64, if (target.result.cpu.arch.endian() == .big) 4321 else 1234),
         .HAVE_ARC4RANDOM = boolDefine(cfg.have_arc4random),
         .HAVE_ARC4RANDOM_BUF = boolDefine(cfg.have_arc4random_buf),
-        .HAVE_DLFCN_H = boolDefine(platform.have_dlfcn_h),
-        .HAVE_FCNTL_H = boolDefine(platform.have_fcntl_h),
-        .HAVE_GETPAGESIZE = boolDefine(platform.have_getpagesize),
+        .HAVE_DLFCN_H = boolDefine(target.result.os.tag != .windows and target.result.os.tag != .wasi),
+        .HAVE_FCNTL_H = boolDefine(true),
+        .HAVE_GETPAGESIZE = boolDefine(target.result.os.tag != .windows and target.result.os.tag != .wasi),
         .HAVE_GETRANDOM = boolDefine(cfg.have_getrandom),
         .HAVE_GETENTROPY = boolDefine(cfg.have_getentropy),
-        .HAVE_INTTYPES_H = boolDefine(platform.have_inttypes_h),
-        .HAVE_MEMORY_H = boolDefine(platform.have_memory_h),
-        .HAVE_MMAP = boolDefine(platform.have_mmap),
-        .HAVE_STDINT_H = boolDefine(platform.have_stdint_h),
-        .HAVE_STDLIB_H = boolDefine(platform.have_stdlib_h),
-        .HAVE_STRINGS_H = boolDefine(platform.have_strings_h),
-        .HAVE_STRING_H = boolDefine(platform.have_string_h),
+        .HAVE_INTTYPES_H = boolDefine(true),
+        .HAVE_MEMORY_H = boolDefine(true),
+        .HAVE_MMAP = boolDefine(target.result.os.tag != .windows and target.result.os.tag != .wasi),
+        .HAVE_STDINT_H = boolDefine(true),
+        .HAVE_STDLIB_H = boolDefine(true),
+        .HAVE_STRINGS_H = boolDefine(!(target.result.os.tag == .windows and target.result.abi == .msvc)),
+        .HAVE_STRING_H = boolDefine(true),
         .HAVE_SYSCALL_GETRANDOM = boolDefine(cfg.have_syscall_getrandom),
-        .HAVE_SYS_STAT_H = boolDefine(platform.have_sys_stat_h),
-        .HAVE_SYS_TYPES_H = boolDefine(platform.have_sys_types_h),
-        .HAVE_UNISTD_H = boolDefine(platform.have_unistd_h),
+        .HAVE_SYS_STAT_H = boolDefine(true),
+        .HAVE_SYS_TYPES_H = boolDefine(true),
+        .HAVE_UNISTD_H = boolDefine(!(target.result.os.tag == .windows and target.result.abi == .msvc)),
         .PACKAGE = package_name,
         .PACKAGE_BUGREPORT = package_bugreport,
         .PACKAGE_NAME = package_name,
@@ -391,14 +363,14 @@ pub fn build(b: *std.Build) void {
         .PACKAGE_TARNAME = package_tarname,
         .PACKAGE_URL = package_url,
         .PACKAGE_VERSION = package_version_str,
-        .STDC_HEADERS = boolDefine(platform.stdc_headers),
-        .WORDS_BIGENDIAN = boolDefine(platform.is_big_endian),
+        .STDC_HEADERS = boolDefine(true),
+        .WORDS_BIGENDIAN = boolDefine(target.result.cpu.arch.endian() == .big),
         .XML_CONTEXT_BYTES = @as(i64, cfg.context_bytes),
-        .XML_DEV_URANDOM = boolDefine(!platform.is_windows and cfg.dev_urandom),
+        .XML_DEV_URANDOM = boolDefine(target.result.os.tag != .windows and cfg.dev_urandom),
         .XML_DTD = boolDefine(cfg.enable_dtd),
         .XML_GE = @as(i64, if (cfg.enable_ge) 1 else 0),
         .XML_NS = boolDefine(cfg.enable_ns),
-        .off_t = @as(?enum { long }, if (platform.have_off_t) null else .long),
+        .off_t = @as(?enum { long }, null),
     });
 
     // Compiler flags and source file list.
@@ -431,7 +403,7 @@ pub fn build(b: *std.Build) void {
     lib_mod.addConfigHeader(config_header);
     lib_mod.addIncludePath(lib_inc);
     applyCommonMacros(lib_mod, &cfg);
-    if (platform.is_windows and !cfg.shared) {
+    if (target.result.os.tag == .windows and !cfg.shared) {
         lib_mod.addCMacro("XML_STATIC", "1");
     }
     lib_mod.addCSourceFiles(.{
@@ -439,13 +411,13 @@ pub fn build(b: *std.Build) void {
         .files = expat_c_sources,
         .flags = c_flags,
     });
-    if (platform.link_libm) {
+    if (needsLibm(target.result)) {
         lib_mod.linkSystemLibrary("m", .{});
     }
 
     const dtd_or_ge = cfg.enable_dtd or cfg.enable_ge;
     var win32_def_file: ?std.Build.LazyPath = null;
-    if (platform.is_windows and cfg.shared) {
+    if (target.result.os.tag == .windows and cfg.shared) {
         const dll_ver = b.fmt("-DVER_FILEVERSION={d},{d},{d},0", .{
             package_version.major,
             package_version.minor,
@@ -468,7 +440,7 @@ pub fn build(b: *std.Build) void {
     const lib = b.addLibrary(.{
         .name = lib_name,
         .linkage = if (cfg.shared) .dynamic else .static,
-        .version = if (cfg.shared and !platform.is_windows)
+        .version = if (cfg.shared and target.result.os.tag != .windows)
             .{
                 .major = lib_current_minus_age,
                 .minor = lib_age,
@@ -480,7 +452,7 @@ pub fn build(b: *std.Build) void {
         .root_module = lib_mod,
     });
 
-    if (!platform.is_windows and cfg.shared and cfg.symbol_versioning) {
+    if (target.result.os.tag != .windows and cfg.shared and cfg.symbol_versioning) {
         const map_file = addConfiguredTemplate(
             b,
             expat_dep.path("expat/lib/libexpat.map.in"),
@@ -523,7 +495,7 @@ pub fn build(b: *std.Build) void {
         expat_translator.defineCMacro("XML_DTD", "1");
     }
     expat_translator.defineCMacro("XML_GE", if (cfg.enable_ge) "1" else "0");
-    if (platform.is_windows and !cfg.shared) {
+    if (target.result.os.tag == .windows and !cfg.shared) {
         expat_translator.defineCMacro("XML_STATIC", "1");
     }
     b.modules.put(b.allocator, b.dupe("expat"), expat_translator.mod) catch @panic("OOM");
@@ -534,10 +506,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     zig_test_mod.addImport("expat", expat_translator.mod);
-    if (cfg.shared and !platform.is_windows) {
-        if (platform.is_darwin) {
+    if (cfg.shared and target.result.os.tag != .windows) {
+        if (target.result.os.tag.isDarwin()) {
             zig_test_mod.addRPathSpecial("@loader_path/../lib");
-        } else if (!platform.is_wasi) {
+        } else if (target.result.os.tag != .wasi) {
             zig_test_mod.addRPathSpecial("$ORIGIN/../lib");
         }
     }
@@ -556,7 +528,7 @@ pub fn build(b: *std.Build) void {
             cfg.postfix,
             package_version_str,
             lib_name,
-            if (platform.pkgconfig_libm) "-lm" else "",
+            if (target.result.os.tag != .windows and target.result.os.tag != .wasi and target.result.os.tag != .freestanding) "-lm" else "",
         });
         const pc_file = b.addWriteFiles().add("expat.pc", pc_content);
         if (cfg.enable_install) {
@@ -590,7 +562,7 @@ pub fn build(b: *std.Build) void {
         xmlwf_mod.addIncludePath(lib_inc);
         xmlwf_mod.addIncludePath(expat_dep.path("expat/xmlwf"));
         applyCommonMacros(xmlwf_mod, &cfg);
-        if (platform.is_windows and !cfg.shared) {
+        if (target.result.os.tag == .windows and !cfg.shared) {
             xmlwf_mod.addCMacro("XML_STATIC", "1");
         }
         xmlwf_mod.addCSourceFiles(.{
@@ -605,13 +577,13 @@ pub fn build(b: *std.Build) void {
             .flags = c_flags,
         });
         xmlwf_mod.linkLibrary(lib);
-        if (platform.link_libm) {
+        if (needsLibm(target.result)) {
             xmlwf_mod.linkSystemLibrary("m", .{});
         }
-        if (cfg.shared and !platform.is_windows) {
-            if (platform.is_darwin) {
+        if (cfg.shared and target.result.os.tag != .windows) {
+            if (target.result.os.tag.isDarwin()) {
                 xmlwf_mod.addRPathSpecial("@loader_path/../lib");
-            } else if (!platform.is_wasi) {
+            } else if (target.result.os.tag != .wasi) {
                 xmlwf_mod.addRPathSpecial("$ORIGIN/../lib");
             }
         }
@@ -620,7 +592,7 @@ pub fn build(b: *std.Build) void {
             .name = "xmlwf",
             .root_module = xmlwf_mod,
         });
-        if (platform.is_mingw and cfg.unicode_wchar_t) {
+        if (target.result.os.tag == .windows and target.result.abi == .gnu and cfg.unicode_wchar_t) {
             xmlwf.mingw_unicode_entry_point = true;
         }
         xmlwf_exe = xmlwf;
@@ -702,7 +674,7 @@ pub fn build(b: *std.Build) void {
             });
             ex_mod.addIncludePath(lib_inc);
             applyCommonMacros(ex_mod, &cfg);
-            if (platform.is_windows and !cfg.shared) {
+            if (target.result.os.tag == .windows and !cfg.shared) {
                 ex_mod.addCMacro("XML_STATIC", "1");
             }
             ex_mod.addCSourceFiles(.{
@@ -711,10 +683,10 @@ pub fn build(b: *std.Build) void {
                 .flags = c_flags,
             });
             ex_mod.linkLibrary(lib);
-            if (cfg.shared and !platform.is_windows) {
-                if (platform.is_darwin) {
+            if (cfg.shared and target.result.os.tag != .windows) {
+                if (target.result.os.tag.isDarwin()) {
                     ex_mod.addRPathSpecial("@loader_path/../lib");
-                } else if (!platform.is_wasi) {
+                } else if (target.result.os.tag != .wasi) {
                     ex_mod.addRPathSpecial("$ORIGIN/../lib");
                 }
             }
@@ -767,7 +739,7 @@ pub fn build(b: *std.Build) void {
         runtests_mod.addIncludePath(expat_dep.path("expat/tests"));
         applyCommonMacros(runtests_mod, &cfg);
         runtests_mod.addCMacro("XML_TESTING", "1");
-        if (platform.is_windows) {
+        if (target.result.os.tag == .windows) {
             runtests_mod.addCMacro("XML_STATIC", "1");
         }
         runtests_mod.addCSourceFiles(.{
@@ -780,7 +752,7 @@ pub fn build(b: *std.Build) void {
             .files = expat_c_sources,
             .flags = c_flags,
         });
-        if (platform.link_libm) {
+        if (needsLibm(target.result)) {
             runtests_mod.linkSystemLibrary("m", .{});
         }
 
@@ -803,7 +775,7 @@ pub fn build(b: *std.Build) void {
         });
         bench_mod.addIncludePath(lib_inc);
         applyCommonMacros(bench_mod, &cfg);
-        if (platform.is_windows and !cfg.shared) {
+        if (target.result.os.tag == .windows and !cfg.shared) {
             bench_mod.addCMacro("XML_STATIC", "1");
         }
         bench_mod.addCSourceFiles(.{
@@ -812,10 +784,10 @@ pub fn build(b: *std.Build) void {
             .flags = c_flags,
         });
         bench_mod.linkLibrary(lib);
-        if (cfg.shared and !platform.is_windows) {
-            if (platform.is_darwin) {
+        if (cfg.shared and target.result.os.tag != .windows) {
+            if (target.result.os.tag.isDarwin()) {
                 bench_mod.addRPathSpecial("@loader_path/../lib");
-            } else if (!platform.is_wasi) {
+            } else if (target.result.os.tag != .wasi) {
                 bench_mod.addRPathSpecial("$ORIGIN/../lib");
             }
         }
@@ -832,7 +804,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // W3C XML conformance suite (run-xmltest).
-    if (cfg.build_tools and !platform.is_msvc) {
+    if (cfg.build_tools and !(target.result.os.tag == .windows and target.result.abi == .msvc)) {
         if (xmlwf_exe) |xmlwf| {
             const xmltest_cmd = b.addSystemCommand(&.{"sh"});
             xmltest_cmd.addFileArg(b.path("build/run_xmltest.sh"));
@@ -855,7 +827,7 @@ pub fn build(b: *std.Build) void {
         fuzzpat_mod.addConfigHeader(config_header);
         fuzzpat_mod.addIncludePath(lib_inc);
         applyCommonMacros(fuzzpat_mod, &cfg);
-        if (platform.is_windows) {
+        if (target.result.os.tag == .windows) {
             fuzzpat_mod.addCMacro("XML_STATIC", "1");
         }
         fuzzpat_mod.addCSourceFiles(.{
@@ -897,7 +869,7 @@ pub fn build(b: *std.Build) void {
                 fuzzer_mod.addIncludePath(lib_inc);
                 applyCommonMacros(fuzzer_mod, &cfg);
                 fuzzer_mod.addCMacro("ENCODING_FOR_FUZZING", enc);
-                if (platform.is_windows) {
+                if (target.result.os.tag == .windows) {
                     fuzzer_mod.addCMacro("XML_STATIC", "1");
                 }
                 fuzzer_mod.addCSourceFiles(.{
@@ -948,105 +920,68 @@ fn addConfiguredTemplate(
     return out;
 }
 
-fn detectPlatform(t: std.Target) PlatformInfo {
+fn needsLibm(t: std.Target) bool {
+    return t.os.tag != .windows and t.os.tag != .wasi and !t.os.tag.isDarwin() and t.os.tag != .freestanding;
+}
+
+fn detectEntropy(t: std.Target, kind: EntropyKind) bool {
     const os_tag = t.os.tag;
-    const is_windows = os_tag == .windows;
-    const is_mingw = is_windows and t.abi == .gnu;
-    const is_msvc = is_windows and t.abi == .msvc;
-    const is_darwin = os_tag.isDarwin();
-    const is_wasi = os_tag == .wasi;
-    const is_big_endian = t.cpu.arch.endian() == .big;
-
-    var detect_arc4random = false;
-    var detect_arc4random_buf = false;
-    var detect_getentropy = false;
-    var detect_getrandom = false;
-    var detect_syscall_getrandom = false;
-
-    if (is_darwin) {
-        detect_arc4random = true;
-        if (os_tag == .macos) {
-            const min_ver = t.os.version_range.semver.min;
-            detect_arc4random_buf = min_ver.order(.{ .major = 10, .minor = 7, .patch = 0 }) != .lt;
-            detect_getentropy = min_ver.order(.{ .major = 10, .minor = 12, .patch = 0 }) != .lt;
-        } else {
-            detect_arc4random_buf = true;
-            detect_getentropy = true;
-        }
-    } else if (os_tag == .linux) {
+    if (os_tag.isDarwin()) {
+        return switch (kind) {
+            .arc4random => true,
+            .arc4random_buf => if (os_tag == .macos)
+                t.os.version_range.semver.min.order(.{ .major = 10, .minor = 7, .patch = 0 }) != .lt
+            else
+                true,
+            .getentropy => if (os_tag == .macos)
+                t.os.version_range.semver.min.order(.{ .major = 10, .minor = 12, .patch = 0 }) != .lt
+            else
+                true,
+            .getrandom, .syscall_getrandom => false,
+        };
+    }
+    if (os_tag == .linux) {
         if (t.isGnuLibC()) {
             const glibc = t.os.version_range.linux.glibc;
-            detect_getrandom = glibc.order(.{ .major = 2, .minor = 25, .patch = 0 }) != .lt;
-            detect_getentropy = glibc.order(.{ .major = 2, .minor = 25, .patch = 0 }) != .lt;
-            detect_arc4random = glibc.order(.{ .major = 2, .minor = 36, .patch = 0 }) != .lt;
-            detect_arc4random_buf = glibc.order(.{ .major = 2, .minor = 36, .patch = 0 }) != .lt;
-            detect_syscall_getrandom = true;
+            return switch (kind) {
+                .getrandom, .getentropy => glibc.order(.{ .major = 2, .minor = 25, .patch = 0 }) != .lt,
+                .arc4random, .arc4random_buf => glibc.order(.{ .major = 2, .minor = 36, .patch = 0 }) != .lt,
+                .syscall_getrandom => true,
+            };
         } else if (t.isMuslLibC()) {
-            detect_getrandom = true;
-            detect_getentropy = true;
-            detect_syscall_getrandom = true;
+            return switch (kind) {
+                .getrandom, .getentropy, .syscall_getrandom => true,
+                .arc4random, .arc4random_buf => false,
+            };
         } else if (t.abi.isAndroid()) {
-            detect_arc4random = true;
-            detect_arc4random_buf = true;
-            detect_getrandom = true;
-            detect_getentropy = true;
-            detect_syscall_getrandom = true;
+            return true;
         } else {
-            detect_syscall_getrandom = true;
+            return kind == .syscall_getrandom;
         }
-    } else if (os_tag == .freebsd or os_tag == .netbsd or os_tag == .illumos) {
-        detect_arc4random = true;
-        detect_arc4random_buf = true;
-        detect_getentropy = true;
-        detect_getrandom = true;
-    } else if (os_tag == .openbsd or os_tag == .dragonfly or os_tag == .haiku or is_wasi) {
-        detect_arc4random = true;
-        detect_arc4random_buf = true;
-        detect_getentropy = true;
     }
-
-    return .{
-        .is_windows = is_windows,
-        .is_mingw = is_mingw,
-        .is_msvc = is_msvc,
-        .is_darwin = is_darwin,
-        .is_wasi = is_wasi,
-        .is_big_endian = is_big_endian,
-        .link_libm = !is_windows and !is_wasi and !is_darwin and os_tag != .freestanding,
-        .pkgconfig_libm = !is_windows and !is_wasi and os_tag != .freestanding,
-        .have_dlfcn_h = !is_windows and !is_wasi,
-        .have_fcntl_h = true,
-        .have_inttypes_h = true,
-        .have_memory_h = true,
-        .have_stdint_h = true,
-        .have_stdlib_h = true,
-        .have_strings_h = !is_msvc,
-        .have_string_h = true,
-        .have_sys_stat_h = true,
-        .have_sys_types_h = true,
-        .have_unistd_h = !is_msvc,
-        .stdc_headers = true,
-        .have_off_t = true,
-        .have_getpagesize = !is_windows and !is_wasi,
-        .have_mmap = !is_windows and !is_wasi,
-        .detect_arc4random = detect_arc4random,
-        .detect_arc4random_buf = detect_arc4random_buf,
-        .detect_getentropy = detect_getentropy,
-        .detect_getrandom = detect_getrandom,
-        .detect_syscall_getrandom = detect_syscall_getrandom,
-    };
+    if (os_tag == .freebsd or os_tag == .netbsd or os_tag == .illumos) {
+        return kind != .syscall_getrandom;
+    }
+    if (os_tag == .openbsd or os_tag == .dragonfly or os_tag == .haiku or os_tag == .wasi) {
+        return switch (kind) {
+            .arc4random, .arc4random_buf, .getentropy => true,
+            .getrandom, .syscall_getrandom => false,
+        };
+    }
+    return false;
 }
 
 fn resolveEntropy(
     b: *std.Build,
-    is_windows: bool,
+    t: std.Target,
     opt: EntropyOption,
-    detected: bool,
+    kind: EntropyKind,
     thing_lower: []const u8,
     opt_name: []const u8,
     triple: []const u8,
 ) ?bool {
-    if (is_windows) return false;
+    if (t.os.tag == .windows) return false;
+    const detected = detectEntropy(t, kind);
     return switch (opt) {
         .auto => detected,
         .on => if (detected) true else {
@@ -1090,15 +1025,15 @@ fn buildCFlags(b: *std.Build, cfg: *const BuildConfig) []const []const u8 {
     flags.append(b.allocator, "-std=c99") catch @panic("OOM");
     flags.append(b.allocator, "-fno-strict-aliasing") catch @panic("OOM");
     flags.append(b.allocator, "-Wimplicit-fallthrough") catch @panic("OOM");
-    if (!cfg.platform.is_windows) {
+    if (cfg.target.result.os.tag != .windows) {
         flags.append(b.allocator, "-fvisibility=hidden") catch @panic("OOM");
     }
-    if (cfg.unicode_wchar_t and !cfg.platform.is_windows and cfg.short_wchar) {
+    if (cfg.unicode_wchar_t and cfg.target.result.os.tag != .windows and cfg.short_wchar) {
         flags.append(b.allocator, "-fshort-wchar") catch @panic("OOM");
     }
     if (cfg.warnings_as_errors) {
         flags.append(b.allocator, "-Werror") catch @panic("OOM");
-        if (cfg.platform.is_mingw) {
+        if (cfg.target.result.os.tag == .windows and cfg.target.result.abi == .gnu) {
             flags.append(b.allocator, "-Wno-format") catch @panic("OOM");
         }
     }
@@ -1119,7 +1054,7 @@ fn buildExpatCSources(b: *std.Build, cfg: *const BuildConfig) []const []const u8
     if (cfg.have_arc4random_buf) {
         srcs.append(b.allocator, "lib/random_arc4random_buf.c") catch @panic("OOM");
     }
-    if (!cfg.platform.is_windows and cfg.dev_urandom) {
+    if (cfg.target.result.os.tag != .windows and cfg.dev_urandom) {
         srcs.append(b.allocator, "lib/random_dev_urandom.c") catch @panic("OOM");
     }
     if (cfg.have_getentropy) {
@@ -1128,7 +1063,7 @@ fn buildExpatCSources(b: *std.Build, cfg: *const BuildConfig) []const []const u8
     if (cfg.have_getrandom or cfg.have_syscall_getrandom) {
         srcs.append(b.allocator, "lib/random_getrandom.c") catch @panic("OOM");
     }
-    if (cfg.platform.is_windows) {
+    if (cfg.target.result.os.tag == .windows) {
         srcs.append(b.allocator, "lib/random_rand_s.c") catch @panic("OOM");
     }
     return srcs.items;
@@ -1144,10 +1079,10 @@ fn applyCommonMacros(mod: *std.Build.Module, cfg: *const BuildConfig) void {
             mod.addCMacro("XML_UNICODE_WCHAR_T", "1");
         }
     }
-    if (!cfg.platform.is_windows and cfg.shared) {
+    if (cfg.target.result.os.tag != .windows and cfg.shared) {
         mod.addCMacro("XML_ENABLE_VISIBILITY", "1");
     }
-    if (cfg.platform.is_msvc) {
+    if (cfg.target.result.os.tag == .windows and cfg.target.result.abi == .msvc) {
         mod.addCMacro("_CRT_SECURE_NO_WARNINGS", "1");
     }
 }
